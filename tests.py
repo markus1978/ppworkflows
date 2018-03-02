@@ -17,6 +17,25 @@ def test_basic():
     workflow.run()
 
 
+def test_massive_parallel():
+    def producer():
+        i = 0
+        while i < 1000000:
+            i += 1
+            yield i
+
+    def work(task):
+        item = task.get_one()
+        task.put([('Sum: {:6d}', item), ('Calls: {:2d}', 1)])
+
+    workflow = ppw.Workflow()
+    workflow.add_task(ppw.GeneratorTask(producer), outputs=["numbers"])
+    workflow.add_task(ppw.SimpleTask(work), input="numbers", outputs=["sums"], runner_count=24)
+    workflow.add_task(ppw.StatusTask(), input="sums")
+    workflow.run()
+
+
 if __name__ == "__main__":
     test_basic()
+    test_massive_parallel()
 

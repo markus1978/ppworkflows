@@ -1,3 +1,5 @@
+[![PyPI version](https://badge.fury.io/py/ppworkflows.svg)](https://badge.fury.io/py/ppworkflows) [![Build Status](https://travis-ci.org/markus1978/ppworkflows.svg?branch=master)](https://travis-ci.org/markus1978/ppworkflows)
+
 # Parallel Python Workflows
 
 Execute data driven task-based workflows in parallel with python. 
