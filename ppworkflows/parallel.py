@@ -351,7 +351,7 @@ class Workflow(object):
 
     See :class:`Task` for more details on task lifecycle and communication.
     """
-    def __init__(self) -> None:
+    def __init__(self):
         self._tasks = []
         self._queues = dict()
 
