@@ -20,7 +20,7 @@ def test_basic():
 def test_massive_parallel():
     def producer():
         i = 0
-        while i < 1000000:
+        while i < 30000:
             i += 1
             yield i
 

@@ -94,8 +94,7 @@ class StatusTask(Task):
         return ",".join(["X" if queue.full() else "O" if queue.empty() else "_" for _, queue in self._queues]) + " "
 
     def run_loop(self):
-        # for status in self.get_available(timeout=0.1):
-        for status in self.get_many(count=1):
+        for status in self.get_many(100, timeout=0.1, minimum=1):
             for field, value in status:
                 old_value = self._data.get(field, 0)
                 self._data[field] = old_value + value

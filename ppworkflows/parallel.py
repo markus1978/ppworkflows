@@ -2,7 +2,6 @@ import logging
 import traceback
 
 from multiprocessing import Queue, Process, Value, Lock
-# noinspection PyCompatibility
 from queue import Empty
 
 LOGGER = logging.getLogger(__name__)
@@ -77,25 +76,32 @@ class Task(object):
         for process in self._processes:
             process.start()
 
-    def get_many(self, count=1):
+    def get_many(self, count=1, timeout=None, minimum=0):
         """
         Returns a iterable of objects read from the input of a running task. Executed in a task runner process.
-        Will block unter enough objects are available. Will raise StopeIteration if not more objects are
+        Will block until enough objects are available. Will raise StopeIteration if not more objects are
         available and the queue has been closed.
         :param count: The number of objects to wait for.
+        :param timeout: A timeout used to wait for an object. Will potentially return iterable with less than count items.
+        :param minimum: A minimum amount of objects to return even with timeout.
         :return: An iterable of objects. Can be smaller than :param:`count` if the queue was closed.
         """
+        assert minimum <= count
         self._check()
         values = []
         try:
             while len(values) < count:
-                values.append(self._input.get())
+                try:
+                    values.append(self._input.get(timeout))
+                except Empty:
+                    if len(values) > minimum:
+                        return values
         except StopIteration:
             self._stopped = True
         finally:
             return values
 
-    def get_available(self, minimum=1, timeout=1):
+    def get_available(self, minimum=1, timeout=None):
         """
         Returns an iterable with all available objects in the input queue of a running task. Exectued in a task
         runner processes. Will block for :param:`timeout` or until the :param:`minimum` of objects are available.
@@ -104,19 +110,7 @@ class Task(object):
         :param timeout: The timeout that should be used to decide if more objects are available or not.
         :return: An iterable of objects. Can be smaller than :param:`minimum` if the queue was closed.
         """
-        self._check()
-        values = []
-        try:
-            while len(values) < minimum:
-                try:
-                    while True:
-                        values.append(self._input.get(timeout=timeout))
-                except Empty:
-                    pass
-        except StopIteration:
-            self._stopped = True
-
-        return values
+        return self.get_many(count=int('inf'), timeout=timeout, minimum=minimum)
 
     def get_one(self):
         """
