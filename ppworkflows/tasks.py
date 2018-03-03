@@ -31,7 +31,7 @@ class GeneratorTask(Task):
 
 class SimpleTask(Task):
     def __init__(self, work):
-        super().__init__()
+        super().__init__("SimpleTask::%s" % work.__name__)
         self._work = work
 
     def run_loop(self):

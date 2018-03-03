@@ -24,6 +24,10 @@ def test_massive_parallel():
             i += 1
             yield i
 
+    def forward(task):
+        item = task.get_one()
+        task.put(item)
+
     def work(task):
         item = task.get_one()
         task.put([('Sum: {:6d}', item), ('Calls: {:2d}', 1)])

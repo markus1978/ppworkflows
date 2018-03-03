@@ -31,7 +31,10 @@ class Task(object):
     eventually close the queue, and will cause other tasks that depend on the output of this task to
     eventually stop. Therefore, the whole workflow lifecycle is 'controlled' from the first task(s) in the workflow.
     """
-    def __init__(self):
+    def __init__(self, name=None):
+        """
+        :param name: An optional name for the task. Otherwise the class name will be used.
+        """
         # share variables
         self._outputs = None
         self._input = None
@@ -42,6 +45,9 @@ class Task(object):
         # child variables
         self._stopped = False
         self.process_number = -1
+
+        # task name
+        self._name = name if name is not None else type(self).__name__
 
     def configure(self, workflow, input, output_queues, runner_count):
         """
@@ -57,7 +63,7 @@ class Task(object):
         """
         def run(process_number):
             self.process_number = process_number
-            LOGGER.debug("Started process %s(%s)" % (type(self).__name__, str(process_number)))
+            LOGGER.debug("Started process %s(%s)" % (self._name, str(process_number)))
             self._run()
 
         while len(self._processes) < runner_count:
@@ -192,7 +198,7 @@ class Task(object):
         except StopIteration as e:
             raise e
         except Exception as e:
-            LOGGER.error("Error while running task %s(%s): %s" % (type(self).__name__, self.process_number, str(e)))
+            LOGGER.error("Error while running task %s(%s): %s" % (self._name, self.process_number, str(e)))
             traceback.print_exc()
 
     def run_loop(self):
@@ -212,7 +218,7 @@ class Task(object):
         output queues.
         """
         self.close_all()
-        LOGGER.debug("Stopped process %s(%s)." % (type(self).__name__, self.process_number))
+        LOGGER.debug("Stopped process %s(%s)." % (self._name, self.process_number))
 
     def join(self):
         """
