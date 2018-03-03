@@ -47,7 +47,7 @@ def test_massive_parallel():
 
 
 if __name__ == "__main__":
-    # logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(level=logging.DEBUG)
     test_basic()
-    # test_massive_parallel()
+    test_massive_parallel()
 

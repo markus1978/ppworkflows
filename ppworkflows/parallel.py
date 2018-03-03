@@ -185,6 +185,9 @@ class Task(object):
                     self._run_loop_save()
         except StopIteration:
             pass
+        except KeyboardInterrupt:
+            LOGGER.debug("Received keyboard interrupt in %s(%s). Stopping now." % (self._name, self.process_number))
+            pass
 
         self.stop()
 
@@ -410,7 +413,14 @@ class Workflow(object):
         for task in self._tasks:
             task.start()
         for task in self._tasks:
-            task.join()
+            while True:
+                try:
+                    task.join()
+                    break
+                except KeyboardInterrupt:
+                    print("\nReceived keyboard interrupt, wait for all processes to stop.")
+                    LOGGER.debug("Received keyboard interrupt in parent process.")
+                    pass
 
 
 _synchronize_locks = {}
