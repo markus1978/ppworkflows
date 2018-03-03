@@ -44,6 +44,7 @@ class Task(object):
 
         # child variables
         self._stopped = False
+        self._stop_cause = None
         self.process_number = -1
 
         # task name
@@ -102,8 +103,9 @@ class Task(object):
                 except Empty:
                     if len(values) > minimum:
                         return values
-        except StopIteration:
+        except StopIteration as e:
             self._stopped = True
+            self._stop_cause = e
         finally:
             return values
 
@@ -129,11 +131,12 @@ class Task(object):
             return self._input.get()
         except StopIteration as e:
             self._stopped = True
+            self._stop_cause = e
             raise e
 
     def _check(self):
         if self._stopped:
-            raise StopIteration
+            raise self._stop_cause if self._stop_cause is not None else StopIteration
 
     def _get_output_queue(self, key):
         if key is None:
@@ -176,10 +179,10 @@ class Task(object):
 
         try:
             if self._input is None:
-                self._run_loop_secure()
+                self._run_loop_save()
             else:
                 while True:
-                    self._run_loop_secure()
+                    self._run_loop_save()
         except StopIteration:
             pass
 
@@ -192,10 +195,12 @@ class Task(object):
         """
         pass
 
-    def _run_loop_secure(self):
+    def _run_loop_save(self):
         try:
             self.run_loop()
         except StopIteration as e:
+            self._stop_cause = e
+            self._stopped = True
             raise e
         except Exception as e:
             LOGGER.error("Error while running task %s(%s): %s" % (self._name, self.process_number, str(e)))
@@ -218,7 +223,8 @@ class Task(object):
         output queues.
         """
         self.close_all()
-        LOGGER.debug("Stopped process %s(%s)." % (self._name, self.process_number))
+        message = "Stopped process %s(%s). Cause is %s:" % (self._name, self.process_number, str(self._stop_cause))
+        LOGGER.debug(message, exc_info=self._stop_cause)
 
     def join(self):
         """
@@ -250,7 +256,7 @@ class _MultiQueue(object):
                     self._ors.value -= 1
                     if self._ors.value > 0:
                         self._queue.put(_MultiQueue.end)
-                    raise StopIteration
+                    raise StopIteration("MultiQueue.end received.")
                 else:
                     return value
 
