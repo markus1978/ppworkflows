@@ -23,7 +23,7 @@ def test_basic():
 
 def test_massive_parallel():
     def producer():
-        for i in range(0, 1000):
+        for i in range(0, 200):
             time.sleep(random.uniform(0, 0.1))
             yield i
 
