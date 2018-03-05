@@ -1,5 +1,4 @@
 import logging
-import traceback
 
 from multiprocessing import Queue, Process, Value, Lock
 from queue import Empty
@@ -64,7 +63,7 @@ class Task(object):
         """
         def run(process_number):
             self.process_number = process_number
-            LOGGER.debug("Started process %s(%s)" % (self._name, str(process_number)))
+            LOGGER.debug("Starting process %s(%s)" % (self._name, str(process_number)))
             self._run()
 
         while len(self._processes) < runner_count:
@@ -166,12 +165,14 @@ class Task(object):
         Closing a queue will stop all processes reading from the queue.
         :param key: The key that identifies the output queue. Can be omitted if the task has only one possible output.
         """
+        LOGGER.debug("Closing output with key %s of %s(%s)." % (key, self._name, self.process_number))
         self._get_output_queue(key).close()
 
     def close_all(self):
         """
         Closes all output queue. See also :func:`close`.
         """
+        LOGGER.debug("Closing all outputs of %s(%s)." % (self._name, self.process_number))
         [self.close(queue) for queue in self._outputs]
 
     def _run(self):
@@ -179,14 +180,17 @@ class Task(object):
 
         try:
             if self._input is None:
+                # for generator tasks that don't have inputs, run the loop once
                 self._run_loop_save()
             else:
+                # for all other tasks with input, run the loop indefinitely (it will raise StopIteration when input is closed)
                 while True:
                     self._run_loop_save()
         except StopIteration:
             pass
-        except KeyboardInterrupt:
+        except KeyboardInterrupt as e:
             LOGGER.debug("Received keyboard interrupt in %s(%s). Stopping now." % (self._name, self.process_number))
+            self._stop_cause = e
             pass
 
         self.stop()
@@ -206,8 +210,7 @@ class Task(object):
             self._stopped = True
             raise e
         except Exception as e:
-            LOGGER.error("Error while running task %s(%s): %s" % (self._name, self.process_number, str(e)))
-            traceback.print_exc()
+            LOGGER.error("Error while running task %s(%s): %s" % (self._name, self.process_number, str(e)), exc_info=e)
 
     def run_loop(self):
         """
@@ -225,9 +228,14 @@ class Task(object):
         Is called after the task completed. Is exectued in the runner process. Can be overwritten. Closes all
         output queues.
         """
+        if self._stop_cause is None:
+            message = "Stopped process %s(%s) naturally."
+            LOGGER.debug(message)
+        else:
+            message = "Stopped process %s(%s) because of %s:" % (self._name, self.process_number, str(self._stop_cause))
+            LOGGER.debug(message, exc_info=self._stop_cause)
+
         self.close_all()
-        message = "Stopped process %s(%s). Cause is %s:" % (self._name, self.process_number, str(self._stop_cause))
-        LOGGER.debug(message, exc_info=self._stop_cause)
 
     def join(self):
         """
