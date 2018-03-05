@@ -30,8 +30,6 @@ def test_massive_parallel():
     def forward(task):
         item = task.get_one()
         time.sleep(random.uniform(0, 0.1))
-        if random.uniform(0, 1) < 0.1:
-            raise StopIteration
         task.put(item)
 
     def work(task):

@@ -229,7 +229,7 @@ class Task(object):
         output queues.
         """
         if self._stop_cause is None:
-            message = "Stopped process %s(%s) naturally."
+            message = "Stopped process %s(%s) naturally." % (self._name, self.process_number)
             LOGGER.debug(message)
         else:
             message = "Stopped process %s(%s) because of %s:" % (self._name, self.process_number, str(self._stop_cause))
