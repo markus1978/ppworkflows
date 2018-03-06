@@ -3,6 +3,7 @@ import random
 import time
 
 import sys
+from imp import reload
 
 import ppworkflows as ppw
 import multiprocessing
@@ -54,14 +55,14 @@ def test_deadlock():
             yield i
 
     def forward(task):
-        del(sys.modules['multiprocessing'])
-        import multiprocessing
+        reload(multiprocessing)
         item = task.get_one()
-        if task.process_number < 10:
-            time.sleep(task.process_number)
-        else:
-            time.sleep(random.uniform(0, 0.05))
-        task.put(item)
+        if random.uniform(0, 1) < 0.5:
+            if task.process_number < 10:
+                time.sleep(task.process_number)
+            else:
+                time.sleep(random.uniform(0, 0.05))
+            task.put(item)
 
     def work(task):
         import multiprocessing
