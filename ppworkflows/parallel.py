@@ -208,7 +208,7 @@ class Task(object):
 
     def stop(self):
         """
-        Is called after the task completed. Is exectued in the runner process. Can be overwritten,
+        Is called after the task completed. Is executed in the runner process. Can be overwritten,
         but must be called at the end. Closes all output queues.
         Closing the queues will stop all processes reading from the queues.
         """
@@ -222,8 +222,8 @@ class Task(object):
             message = "Stopped process %s(%s) because of %s:" % (self._name, self.process_number, str(self._stop_cause))
             LOGGER.debug(message)
 
-        # clear all inputs, if the runner was stopped due to unnatural causes
-        if self._input is not None and not natural_cause:
+        # clear all inputs, just in cause
+        if self._input is not None:
             LOGGER.debug("Emptying input of %s(%s), just in case." % (self._name, self.process_number))
             self._input.empty()
             LOGGER.debug("Input of %s(%s) is empty." % (self._name, self.process_number))
@@ -270,7 +270,7 @@ class _MultiQueue(object):
         def get(self, timeout=None):
             with self._ors.get_lock():
                 if self._ors.value == 0:
-                    raise Empty
+                    raise StopIteration("Queue already closed and emptied.")
                 if timeout is None:
                     value = self._queue.get(block=True)
                 else:
