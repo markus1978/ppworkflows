@@ -3,6 +3,7 @@ import random
 import time
 
 import ppworkflows as ppw
+import multiprocessing
 
 
 def test_basic():
@@ -51,7 +52,10 @@ def test_deadlock():
 
     def forward(task):
         item = task.get_one()
-        time.sleep(random.uniform(0, 0.05))
+        if task.process_number < 10:
+            time.sleep(task.process_number)
+        else:
+            time.sleep(random.uniform(0, 0.05))
         task.put(item)
 
     def work(task):
@@ -64,8 +68,8 @@ def test_deadlock():
 
     workflow = ppw.Workflow()
     workflow.add_task(ppw.GeneratorTask(producer), outputs=["1"])
-    workflow.add_task(ppw.SimpleTask(forward), input="1", outputs=["2"], runner_count=50, max_input_size=3000)
-    workflow.add_task(ppw.SimpleTask(work), input="2", outputs=["status"], runner_count=10, max_input_size=1000)
+    workflow.add_task(ppw.SimpleTask(forward), input="1", outputs=["2"], runner_count=20, max_input_size=3000)
+    workflow.add_task(ppw.SimpleTask(work), input="2", outputs=["status"], runner_count=4, max_input_size=1000)
     workflow.add_task(ppw.StatusTask(), input="status", max_input_size=1)
     workflow.run()
 
