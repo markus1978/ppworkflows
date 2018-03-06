@@ -103,8 +103,8 @@ class Task(object):
                     if len(values) > minimum:
                         return values
         except StopIteration as e:
-            self._stopped = True
             self._stop_cause = e
+            self._stopped = True
         finally:
             return values
 
@@ -129,13 +129,13 @@ class Task(object):
         try:
             return self._input.get()
         except StopIteration as e:
-            self._stopped = True
             self._stop_cause = e
+            self._stopped = True
             raise e
 
     def _check(self):
         if self._stopped:
-            raise self._stop_cause if self._stop_cause is not None else StopIteration
+            raise self._stop_cause
 
     def _get_output_queue(self, key):
         if key is None:
