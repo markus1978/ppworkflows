@@ -233,7 +233,7 @@ class Task(object):
             LOGGER.debug(message)
         else:
             message = "Stopped process %s(%s) because of %s:" % (self._name, self.process_number, str(self._stop_cause))
-            LOGGER.debug(message, exc_info=self._stop_cause)
+            LOGGER.debug(message)
 
         self.close_all()
 
@@ -243,6 +243,8 @@ class Task(object):
         """
         for process in self._processes:
             process.join()
+            LOGGER.debug("Joined after a runner of %s completed." % self._name)
+        LOGGER.debug("All runner of %s have been joined after completion." % self._name)
 
 
 class _MultiQueue(object):
