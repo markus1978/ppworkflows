@@ -269,6 +269,8 @@ class _MultiQueue(object):
 
         def get(self, timeout=None):
             with self._ors.get_lock():
+                if self._ors.value == 0:
+                    raise Empty
                 if timeout is None:
                     value = self._queue.get(block=True)
                 else:
