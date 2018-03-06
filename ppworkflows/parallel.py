@@ -158,23 +158,6 @@ class Task(object):
         except KeyError:
             pass
 
-    def close(self, key=None):
-        """
-        Can be used to close the output queue after the process has ended. Will be called automatically after the
-        tasked completed (i.e. tasks with no input or tasks ended after input was closed.)
-        Closing a queue will stop all processes reading from the queue.
-        :param key: The key that identifies the output queue. Can be omitted if the task has only one possible output.
-        """
-        LOGGER.debug("Closing output with key %s of %s(%s)." % (key, self._name, self.process_number))
-        self._get_output_queue(key).close()
-
-    def close_all(self):
-        """
-        Closes all output queue. See also :func:`close`.
-        """
-        LOGGER.debug("Closing all outputs of %s(%s)." % (self._name, self.process_number))
-        [self.close(queue) for queue in self._outputs]
-
     def _run(self):
         self.before()
 
@@ -189,11 +172,11 @@ class Task(object):
         except StopIteration:
             pass
         except KeyboardInterrupt as e:
-            LOGGER.debug("Received keyboard interrupt in %s(%s). Stopping now." % (self._name, self.process_number))
+            LOGGER.debug("Received keyboard interrupt in %s(%s). Stopping now..." % (self._name, self.process_number))
             self._stop_cause = e
-            pass
 
         self.stop()
+        LOGGER.debug("Completed runner %s(%s) and process can be joined now." % (self._name, self.process_number))
 
     def before(self):
         """
@@ -225,22 +208,46 @@ class Task(object):
 
     def stop(self):
         """
-        Is called after the task completed. Is exectued in the runner process. Can be overwritten. Closes all
-        output queues.
+        Is called after the task completed. Is exectued in the runner process. Can be overwritten,
+        but must be called at the end. Closes all output queues.
+        Closing the queues will stop all processes reading from the queues.
         """
-        if self._stop_cause is None:
+        natural_cause = isinstance(self._stop_cause, StopIteration)
+
+        # report on stopping and stop reason
+        if natural_cause:
             message = "Stopped process %s(%s) naturally." % (self._name, self.process_number)
             LOGGER.debug(message)
         else:
             message = "Stopped process %s(%s) because of %s:" % (self._name, self.process_number, str(self._stop_cause))
             LOGGER.debug(message)
 
-        self.close_all()
+        # clear all inputs, if the runner was stopped due to unnatural causes
+        if self._input is not None and not natural_cause:
+            LOGGER.debug("Emptying input of %s(%s), just in case." % (self._name, self.process_number))
+            self._input.empty()
+            LOGGER.debug("Input of %s(%s) is empty." % (self._name, self.process_number))
+
+        # closing all outputs and wait for them being emptied by other task runners
+        LOGGER.debug("Closing all outputs of %s(%s)." % (self._name, self.process_number))
+        for queue in self._outputs:
+            LOGGER.debug("Closing output %s of %s(%s)." % (queue, self._name, self.process_number))
+            self._get_output_queue(queue).close()
 
     def join(self):
         """
-        Is called by the :class:`Workflow` in the parent process and will block until all task runner have completed.
+        Is called by the :class:`Workflow` in the parent process and will block until all task runner have completed
+        and their outputs are emptied.
         """
+        # do not try to join processes, when they are still related to unconsumed outputs.
+        for queue in self._outputs:
+            LOGGER.debug("Waiting for output %s of %s to be closed and emptied." % (queue, self._name))
+            self._get_output_queue(queue).block_until_closed_and_emptied()
+            LOGGER.debug("Output %s of %s has been emptied." % (queue, self._name))
+        if len(self._outputs) > 0:
+            LOGGER.debug("All outputs of %s have been emptied." % self._name)
+
+        # now join the runner processes
         for process in self._processes:
             process.join()
             LOGGER.debug("Joined after a runner of %s completed." % self._name)
@@ -255,8 +262,9 @@ class _MultiQueue(object):
     end = "<THE END>"
 
     class Input(object):
-        def __init__(self, queue):
+        def __init__(self, queue, queue_lock):
             self._queue = queue
+            self._queue_lock = queue_lock
             self._ors = Value("i", 0)
 
         def get(self, timeout=None):
@@ -269,13 +277,31 @@ class _MultiQueue(object):
                     self._ors.value -= 1
                     if self._ors.value > 0:
                         self._queue.put(_MultiQueue.end)
+                    else:
+                        self._queue_lock.release()
                     raise StopIteration("MultiQueue.end received.")
                 else:
                     return value
 
+        def empty(self):
+            """
+            Purposefully empties the input queue.
+            """
+            while not self._queue_lock.acquire(block=False):
+                while True:
+                    try:
+                        self.get(timeout=0.01)
+                    except StopIteration:
+                        break
+                    except Empty:
+                        break
+                    except EOFError:
+                        break
+            self._queue_lock.release()
+
         def add_or_input(self):
             """
-            :return: A new alternativ (hence 'or') input based on this input.
+            :return: A new alternative (hence 'or') input based on this input.
             """
             with self._ors.get_lock():
                 self._ors.value += 1
@@ -290,6 +316,9 @@ class _MultiQueue(object):
 
         def close(self):
             self._queue.close()
+
+        def block_until_closed_and_emptied(self):
+            self._queue.block_until_closed_and_emptied()
 
     def __init__(self, name):
         self._name = name
@@ -310,8 +339,10 @@ class _MultiQueue(object):
         :return: A new additive (hence 'and') input for the queue.
         """
         queue = Queue(maxsize=self.maxsize)
-        self._and_queues.append(queue)
-        return _MultiQueue.Input(queue)
+        queue_lock = Lock()  # This is locked until the queue has been emptied after being closed
+        queue_lock.acquire()
+        self._and_queues.append((queue, queue_lock))
+        return _MultiQueue.Input(queue, queue_lock)
 
     def add_output(self):
         """
@@ -326,7 +357,7 @@ class _MultiQueue(object):
             if self._output_counter.value == 0:
                 raise Exception("You cannot output to a closed queue.")
             else:
-                for and_queue in self._and_queues:
+                for and_queue, _ in self._and_queues:
                     and_queue.put(obj)
 
     def close(self):
@@ -334,14 +365,19 @@ class _MultiQueue(object):
             self._output_counter.value -= 1
             if self._output_counter.value == 0:
                 LOGGER.debug("Closing queue %s." % self._name)
-                for and_queue in self._and_queues:
+                for and_queue, _ in self._and_queues:
                     and_queue.put(_MultiQueue.end)
+
+    def block_until_closed_and_emptied(self):
+        for _, and_queue_lock in self._and_queues:
+            and_queue_lock.acquire()
+            and_queue_lock.release()
 
     def full(self):
         """
         :return: True if one of the additive queues is full.
         """
-        for queue in self._and_queues:
+        for queue, _ in self._and_queues:
             if queue.full():
                 return True
         return False
@@ -350,7 +386,7 @@ class _MultiQueue(object):
         """
         :return: True if one of the additive queues is empty.
         """
-        for queue in self._and_queues:
+        for queue, _ in self._and_queues:
             if queue.empty():
                 return True
         return False
@@ -420,17 +456,23 @@ class Workflow(object):
         Can be used to run the workflow after all tasks have been added with :func:`add_task`. Will block
         until all task runner processes have completed.
         """
+        interrupted = False
         for task in self._tasks:
             task.start()
-        for task in self._tasks:
+        for task in reversed(self._tasks):
             while True:
                 try:
                     task.join()
                     break
-                except KeyboardInterrupt:
-                    print("\nReceived keyboard interrupt, wait for all processes to stop.")
-                    LOGGER.debug("Received keyboard interrupt in parent process.")
-                    pass
+                except KeyboardInterrupt as e:
+                    if interrupted:
+                        print("\nHelp!")
+                        raise e
+                    else:
+                        interrupted = True
+                        print("\nReceived keyboard interrupt, wait for all processes to stop.")
+                        LOGGER.debug("Received keyboard interrupt in parent process.")
+                        pass
 
 
 _synchronize_locks = {}
