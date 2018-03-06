@@ -5,8 +5,13 @@ import time
 import sys
 from imp import reload
 
+import mongoengine
+from mongoengine import Document, IntField
+
 import ppworkflows as ppw
 import multiprocessing
+
+from ppworkflows import Task
 
 
 def test_basic():
@@ -49,34 +54,38 @@ def test_massive_parallel():
 
 
 def test_deadlock():
+
+    class TestDoc(Document):
+        value = IntField()
+
+    class Work(Task):
+        def before(self):
+            mongoengine.connect("test", alias="default", host="localhost")
+
+        def run_loop(self):
+            item = self.get_one()
+            doc = TestDoc()
+            doc.value = item
+            doc.save()
+            self.put([('Sum: {:6d}', item), ('Calls: {:2d}', 1)])
+
+    class Forward(Task):
+        def before(self):
+            mongoengine.connect("test", alias="default", host="localhost")
+
+        def run_loop(self):
+            self.get_one()
+            time.sleep(random.uniform(0, 0.05))
+            self.put(TestDoc.objects.count())
+
     def producer():
-        import multiprocessing
         for i in range(0, 10000):
             yield i
 
-    def forward(task):
-        reload(multiprocessing)
-        item = task.get_one()
-        if random.uniform(0, 1) < 0.5:
-            if task.process_number < 10:
-                time.sleep(task.process_number)
-            else:
-                time.sleep(random.uniform(0, 0.05))
-            task.put(item)
-
-    def work(task):
-        import multiprocessing
-        item = task.get_one()
-        if item - 9000 > 0:
-            time.sleep(random.uniform(0, 0.1))
-        else:
-            time.sleep(random.uniform(0, 0.007))
-        task.put([('Sum: {:6d}', item), ('Calls: {:2d}', 1)])
-
     workflow = ppw.Workflow()
     workflow.add_task(ppw.GeneratorTask(producer), outputs=["1"])
-    workflow.add_task(ppw.SimpleTask(forward), input="1", outputs=["2"], runner_count=20, max_input_size=3000)
-    workflow.add_task(ppw.SimpleTask(work), input="2", outputs=["status"], runner_count=4, max_input_size=1000)
+    workflow.add_task(Forward(), input="1", outputs=["2"], runner_count=20, max_input_size=3000)
+    workflow.add_task(Work(), input="2", outputs=["status"], runner_count=4, max_input_size=1000)
     workflow.add_task(ppw.StatusTask(), input="status", max_input_size=1)
     workflow.run()
 
