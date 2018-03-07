@@ -63,8 +63,9 @@ class Task(object):
         """
         def run(process_number):
             self.process_number = process_number
-            LOGGER.debug("Starting process %s(%s)" % (self._name, str(process_number)))
+            LOGGER.debug("Starting runner %s(%s)" % (self._name, self.process_number))
             self._run()
+            LOGGER.debug("Completed runner %s(%s) and process can be joined now." % (self._name, self.process_number))
 
         while len(self._processes) < runner_count:
             if input is not None:
@@ -176,7 +177,6 @@ class Task(object):
             self._stop_cause = e
 
         self.stop()
-        LOGGER.debug("Completed runner %s(%s) and process can be joined now." % (self._name, self.process_number))
 
     def before(self):
         """
@@ -366,9 +366,12 @@ class _MultiQueue(object):
         with self._output_counter.get_lock():
             self._output_counter.value -= 1
             if self._output_counter.value == 0:
-                LOGGER.debug("Closing queue %s." % self._name)
+                LOGGER.debug("Closing queue (including all additive queues) %s." % self._name)
                 for and_queue, _ in self._and_queues:
                     and_queue.put(_MultiQueue.end)
+                    and_queue.close()
+                    and_queue.join_thread()
+                LOGGER.debug("Queue %s closed and queue thread joined." % self._name)
 
     def block_until_closed_and_emptied(self):
         for _, and_queue_lock in self._and_queues:
