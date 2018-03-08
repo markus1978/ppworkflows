@@ -3,6 +3,8 @@ import logging
 from multiprocessing import Queue, Process, Value, Lock
 from queue import Empty
 
+import time
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -222,12 +224,6 @@ class Task(object):
             message = "Stopped process %s(%s) because of %s:" % (self._name, self.process_number, str(self._stop_cause))
             LOGGER.debug(message)
 
-        # clear all inputs, just in cause
-        if self._input is not None:
-            LOGGER.debug("Emptying input of %s(%s), just in case." % (self._name, self.process_number))
-            self._input.empty()
-            LOGGER.debug("Input of %s(%s) is empty." % (self._name, self.process_number))
-
         # closing all outputs and wait for them being emptied by other task runners
         LOGGER.debug("Closing all outputs of %s(%s)." % (self._name, self.process_number))
         for queue in self._outputs:
@@ -239,14 +235,6 @@ class Task(object):
         Is called by the :class:`Workflow` in the parent process and will block until all task runner have completed
         and their outputs are emptied.
         """
-        # do not try to join processes, when they are still related to unconsumed outputs.
-        for queue in self._outputs:
-            LOGGER.debug("Waiting for output %s of %s to be closed and emptied." % (queue, self._name))
-            self._get_output_queue(queue).block_until_closed_and_emptied()
-            LOGGER.debug("Output %s of %s has been emptied." % (queue, self._name))
-        if len(self._outputs) > 0:
-            LOGGER.debug("All outputs of %s have been emptied." % self._name)
-
         # now join the runner processes
         for process in self._processes:
             process.join()
@@ -259,74 +247,81 @@ class _MultiQueue(object):
     A class for queues that supports multiple inputs and outputs for multiple processes writing to, reading from
     can closing a queue.
     """
-    end = "<THE END>"
+    _the_end = "<THE END>"
 
-    class Input(object):
-        def __init__(self, queue, queue_lock):
-            self._queue = queue
-            self._queue_lock = queue_lock
-            self._ors = Value("i", 0)
+    class BaseMultiQueue(object):
 
-        def get(self, timeout=None):
-            with self._ors.get_lock():
-                if self._ors.value == 0:
-                    raise StopIteration("Queue already closed and emptied.")
-                if timeout is None:
-                    value = self._queue.get(block=True)
-                else:
-                    value = self._queue.get(block=True, timeout=timeout)
-                if value == _MultiQueue.end:
-                    self._ors.value -= 1
-                    if self._ors.value > 0:
-                        self._queue.put(_MultiQueue.end)
-                    else:
-                        self._queue_lock.release()
-                    raise StopIteration("MultiQueue.end received.")
-                else:
-                    return value
+        def __init__(self, outputs, maxsize):
+            super().__init__()
+            self._queue = Queue(maxsize=maxsize)
+            self._inputs = Value("i", 0)
+            self._outputs = Value("i", outputs)
 
-        def empty(self):
-            """
-            Purposefully empties the input queue.
-            """
-            while not self._queue_lock.acquire(block=False):
-                while True:
-                    try:
-                        self.get(timeout=0.01)
-                    except StopIteration:
-                        break
-                    except Empty:
-                        break
-                    except EOFError:
-                        break
-            self._queue_lock.release()
+            self._closed = False
+
+        def set_outputs(self, outputs):
+            self._outputs.value = outputs
+
+        def put(self, obj):
+            if self._closed:
+                raise Exception("You cannot put something in a queue, once your runner closed it.")
+            self._queue.put(obj)
+
+        def close(self):
+            if self._closed:
+                raise Exception("Can only close an output once per runner life.")
+            self._closed = True
+            self._queue.put(_MultiQueue._the_end)
+            self._queue.close()
+            self._queue.join_thread()
 
         def add_or_input(self):
             """
             :return: A new alternative (hence 'or') input based on this input.
             """
-            with self._ors.get_lock():
-                self._ors.value += 1
+            self._inputs.value += 1
             return self
 
-    class Output(object):
-        def __init__(self, queue):
-            self._queue = queue
+        def get(self, timeout=None):
+            if timeout is None:
+                value = self._queue.get(block=True)
+            else:
+                value = self._queue.get(block=True, timeout=timeout)
 
-        def put(self, obj):
-            self._queue.put(obj)
+            if value == _MultiQueue._the_end:
+                with self._outputs.get_lock():
+                    if self._outputs.value > 0:
+                        self._outputs.value -= 1
 
-        def close(self):
-            self._queue.close()
+                    is_closed = self._outputs.value == 0
 
-        def block_until_closed_and_emptied(self):
-            self._queue.block_until_closed_and_emptied()
+                if is_closed:
+                    with self._inputs.get_lock():
+                        self._inputs.value -= 1
+                        if self._inputs.value > 0:
+                            self._queue.put(_MultiQueue._the_end)
+
+                    if self._closed:
+                        raise Exception("You must stop getting items after one StopIteration per runner")
+                    self._closed = True
+                    raise StopIteration("MultiQueue.end received.")
+                else:
+                    return self.get(timeout)
+            else:
+                return value
+
+        def full(self):
+            return self._queue.full()
+
+        def empty(self):
+            return self._queue.empty()
 
     def __init__(self, name):
+        super().__init__()
         self._name = name
-        self._and_queues = []
-        self._output_counter = Value('i', 0)
         self.maxsize = -1
+        self._outputs = 0
+        self._queues = []
 
     def configure(self, maxsize):
         """
@@ -336,53 +331,38 @@ class _MultiQueue(object):
         """
         self.maxsize = maxsize
 
-    def add_and_input(self):
-        """
-        :return: A new additive (hence 'and') input for the queue.
-        """
-        queue = Queue(maxsize=self.maxsize)
-        queue_lock = Lock()  # This is locked until the queue has been emptied after being closed
-        queue_lock.acquire()
-        self._and_queues.append((queue, queue_lock))
-        return _MultiQueue.Input(queue, queue_lock)
-
     def add_output(self):
         """
         :return: A new additive output for the queue.
         """
-        with self._output_counter.get_lock():
-            self._output_counter.value += 1
-            return _MultiQueue.Output(self)
+        self._outputs += 1
+        for queue in self._queues:
+            queue.set_outputs(self._outputs)
+        return self
+
+    def add_and_input(self):
+        """
+        :return: A new additive (hence 'and') input for the queue.
+        """
+        queue = _MultiQueue.BaseMultiQueue(self._outputs, self.maxsize)
+        self._queues.append(queue)
+        return queue
 
     def put(self, obj):
-        with self._output_counter.get_lock():
-            if self._output_counter.value == 0:
-                raise Exception("You cannot output to a closed queue.")
-            else:
-                for and_queue, _ in self._and_queues:
-                    and_queue.put(obj)
+        for queue in self._queues:
+            queue.put(obj)
 
     def close(self):
-        with self._output_counter.get_lock():
-            self._output_counter.value -= 1
-            if self._output_counter.value == 0:
-                LOGGER.debug("Closing queue (including all additive queues) %s." % self._name)
-                for and_queue, _ in self._and_queues:
-                    and_queue.put(_MultiQueue.end)
-                    and_queue.close()
-                    and_queue.join_thread()
-                LOGGER.debug("Queue %s closed and queue thread joined." % self._name)
-
-    def block_until_closed_and_emptied(self):
-        for _, and_queue_lock in self._and_queues:
-            and_queue_lock.acquire()
-            and_queue_lock.release()
+        LOGGER.debug("Closing queue (including all additive queues) %s." % self._name)
+        for queue in self._queues:
+            queue.close()
+        LOGGER.debug("Queue %s closed and queue thread joined." % self._name)
 
     def full(self):
         """
         :return: True if one of the additive queues is full.
         """
-        for queue, _ in self._and_queues:
+        for queue in self._queues:
             if queue.full():
                 return True
         return False
@@ -391,7 +371,7 @@ class _MultiQueue(object):
         """
         :return: True if one of the additive queues is empty.
         """
-        for queue, _ in self._and_queues:
+        for queue in self._queues:
             if queue.empty():
                 return True
         return False
@@ -464,6 +444,7 @@ class Workflow(object):
         interrupted = False
         for task in self._tasks:
             task.start()
+
         for task in reversed(self._tasks):
             while True:
                 try:

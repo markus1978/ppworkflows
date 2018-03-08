@@ -71,7 +71,7 @@ class BaseTest(unittest.TestCase):
         pass
 
     def test_1(self):
-            self.perform_test(1)
+        self.perform_test(1)
 
     def test_2(self):
         self.perform_test(2)
