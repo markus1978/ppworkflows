@@ -3,7 +3,7 @@ import logging
 from multiprocessing import Queue, Process, Value, Lock
 from queue import Empty
 
-import time
+import sys
 
 LOGGER = logging.getLogger(__name__)
 
@@ -120,7 +120,7 @@ class Task(object):
         :param timeout: The timeout that should be used to decide if more objects are available or not.
         :return: An iterable of objects. Can be smaller than :param:`minimum` if the queue was closed.
         """
-        return self.get_many(count=int('inf'), timeout=timeout, minimum=minimum)
+        return self.get_many(count=sys.maxsize, timeout=timeout, minimum=minimum)
 
     def get_one(self):
         """
